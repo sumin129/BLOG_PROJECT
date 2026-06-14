@@ -1,15 +1,16 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { POST_STYLE_GUIDE } from './postStyleGuide'
 
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY)
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
 /**
- * Gemini에 프롬프트를 보내고 JSON 응답을 파싱해서 반환합니다.
- * @param {string} prompt
+ * Gemini에 프롬프트(텍스트 또는 텍스트+이미지)를 보내고 JSON 응답을 파싱해서 반환합니다.
+ * @param {string | Array<string | object>} contentParts
  * @returns {Promise<unknown>}
  */
-async function callGemini(prompt) {
-  const result = await model.generateContent(prompt)
+async function callGemini(contentParts) {
+  const result = await model.generateContent(contentParts)
   const text = result.response.text()
   const clean = text.replace(/```json|```/g, '').trim()
   return JSON.parse(clean)
@@ -78,6 +79,8 @@ JSON 형식으로만 응답:
  * @param {string} params.hours
  * @param {string} params.titleKeyword
  * @param {string[]} params.bodyKeywords
+ * @param {string} [params.feedback] 보완 요청 사항
+ * @param {{ title: string, content: string }} [params.previousPost] 이전 생성 결과
  * @returns {Promise<{ title: string, content: string }>}
  */
 export async function generatePost({
@@ -91,7 +94,24 @@ export async function generatePost({
   hours,
   titleKeyword,
   bodyKeywords,
+  feedback,
+  previousPost,
 }) {
+  const feedbackSection = feedback
+    ? `
+
+## 이전 생성 결과
+제목: ${previousPost?.title ?? ''}
+본문:
+${previousPost?.content ?? ''}
+
+## 보완 요청 (반드시 반영)
+${feedback}
+
+위 이전 생성 결과를 바탕으로, 보완 요청 사항을 반영해서 게시글을 다시 작성해주세요.
+나머지 말투/구조/SEO 규칙은 동일하게 유지하세요.
+`
+    : ''
   const prompt = `
 당신은 네이버 맛집 블로그 작성 전문가입니다.
 아래 정보와 스타일 가이드를 참고해서 블로그 게시글을 작성해주세요.
@@ -112,28 +132,9 @@ export async function generatePost({
 
 ## 작성 스타일 가이드 (필수 준수)
 
-### 말투
-- 친근한 구어체, ~요/~어요/~습니다 혼용
-- 흥분/감탄 표현 자주 사용: "미쳤어요", "개맛도리", "레전드", "왕왕"
-- 줄임말, 신조어 자연스럽게 섞기: "렛츠고", "챱챱", "맛도리"
-- 쉼표 여러개(,,), ㅋㅋ, ㅠㅠ 적절히 사용
-- 혼잣말 스타일의 감탄: "대창 사랑해...", "소주 야르~하다"
-- 가성비 포인트는 꼭 가격 직접 명시
+${POST_STYLE_GUIDE}
 
-### 구조 (이 순서로 작성)
-1. 인사 + 방문 계기 (2~3줄, 짧게)
-2. 가게명 + 위치/영업시간 소제목 → 주소, 영업시간 기재
-3. 내부/분위기 소제목 → 분위기 묘사
-4. 기본찬/반찬 소제목 → 반찬 묘사
-5. 메인 메뉴 소제목 → 메뉴별 개인 코멘트, 취향 순위
-6. 마무리 총평 + 강력 추천 멘트
-7. 주소 한 번 더 기재
-
-### SEO 규칙
-- 소제목 형식: "[지역] [음식종류] 맛집 [가게명]" 패턴 사용
-- 본문 키워드를 자연스럽게 2~3회 반복 삽입
-- 게시글 끝에 주소 텍스트로 한 번 더 작성
-
+${feedbackSection}
 제목과 본문을 아래 JSON 형식으로만 응답:
 {
   "title": "제목",
@@ -145,6 +146,44 @@ export async function generatePost({
 
   if (typeof data.title !== 'string' || typeof data.content !== 'string') {
     throw new Error('게시글 생성 응답 형식이 올바르지 않습니다. 다시 시도해주세요.')
+  }
+
+  return data
+}
+
+/**
+ * 네이버플레이스 등에서 캡쳐한 이미지에서 주소와 영업시간을 추출합니다.
+ * @param {object} params
+ * @param {string} params.base64 이미지의 base64 데이터 (data: 접두사 제외)
+ * @param {string} params.mimeType 이미지 MIME 타입 (예: image/png)
+ * @returns {Promise<{ address: string, hours: string }>}
+ */
+export async function extractStoreInfoFromImage({ base64, mimeType }) {
+  const prompt = `
+아래는 네이버플레이스 등에서 캡쳐한 가게 정보 이미지입니다.
+이미지에서 주소와 영업시간 정보를 추출해주세요.
+
+추출 규칙:
+- address: 이미지에 보이는 도로명 주소를 그대로 추출 (건물명, 층 정보 포함)
+- hours: 요일별 영업시간을 분석해서 한 줄로 정리
+  - 대부분의 요일(7일 중 5일 이상)이 같은 영업시간이면 "매일 [영업시간] (라스트오더 [시간])"으로 요약하고, 나머지 예외 요일은 뒤에 이어서 표기
+    (예: "매일 16:00 - 22:30 (라스트오더 21:30), 화요일 정기휴무")
+  - 그렇지 않으면 영업시간이 같은 요일끼리 묶어서 표현
+    (예: "월~금 11:00 - 22:00, 토~일 12:00 - 23:00 (라스트오더 22:00)")
+  - 라스트오더/정기휴무 정보가 있으면 함께 표기
+- 이미지에서 해당 정보를 찾을 수 없으면 빈 문자열("")로 응답
+
+JSON 형식으로만 응답:
+{
+  "address": "추출된 주소",
+  "hours": "추출된 영업시간"
+}
+`
+
+  const data = await callGemini([prompt, { inlineData: { data: base64, mimeType } }])
+
+  if (typeof data.address !== 'string' || typeof data.hours !== 'string') {
+    throw new Error('이미지에서 정보를 추출하지 못했습니다. 다시 시도해주세요.')
   }
 
   return data

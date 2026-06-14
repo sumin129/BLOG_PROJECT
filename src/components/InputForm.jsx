@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { extractStoreInfoFromImage } from '../services/geminiApi'
 
 const initialFormData = {
   storeName: '',
@@ -28,13 +29,66 @@ function Field({ label, required, error, children }) {
   )
 }
 
+/**
+ * 이미지 파일을 base64 문자열(data: 접두사 제외)로 변환합니다.
+ * @param {File} file
+ * @returns {Promise<string>}
+ */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result.split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 function InputForm({ onAnalyze }) {
   const [formData, setFormData] = useState(initialFormData)
   const [errors, setErrors] = useState({})
+  const [isExtracting, setIsExtracting] = useState(false)
+  const [captureError, setCaptureError] = useState('')
+  const [captureNotice, setCaptureNotice] = useState('')
 
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const handlePasteCapture = async (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    const imageItem = Array.from(items).find((item) => item.type.startsWith('image/'))
+    if (!imageItem) return
+
+    e.preventDefault()
+    const file = imageItem.getAsFile()
+    if (!file) return
+
+    setCaptureError('')
+    setCaptureNotice('')
+    setIsExtracting(true)
+    try {
+      const base64 = await fileToBase64(file)
+      const result = await extractStoreInfoFromImage({ base64, mimeType: file.type })
+
+      if (!result.address && !result.hours) {
+        setCaptureError('이미지에서 정보를 찾지 못했어요. 직접 입력해주세요.')
+        return
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        address: result.address || prev.address,
+        hours: result.hours || prev.hours,
+      }))
+      setCaptureNotice('캡쳐 이미지에서 주소/영업시간을 가져왔어요. 필요한 부분은 직접 수정해주세요.')
+    } catch (err) {
+      setCaptureError(err.message || '이미지에서 정보를 추출하지 못했어요. 직접 입력해주세요.')
+    } finally {
+      setIsExtracting(false)
+    }
   }
 
   const validate = () => {
@@ -58,6 +112,26 @@ function InputForm({ onAnalyze }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="space-y-2 rounded-md border border-dashed border-gray-300 p-4">
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          주소 / 영업시간 캡쳐 붙여넣기
+        </label>
+        <div
+          onPaste={handlePasteCapture}
+          tabIndex={0}
+          className="flex min-h-[72px] cursor-text items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-center text-sm text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          {isExtracting
+            ? '캡쳐 이미지에서 정보를 추출하는 중...'
+            : '여기를 클릭하고 캡쳐 이미지를 붙여넣어주세요 (Ctrl+V)'}
+        </div>
+        <p className="mt-1 text-xs text-gray-400">
+          네이버플레이스 등의 주소/영업시간 캡쳐를 붙여넣으면 주소와 영업시간을 자동으로 채워드려요.
+        </p>
+        {captureError && <p className="text-xs text-red-500">{captureError}</p>}
+        {captureNotice && <p className="text-xs text-green-600">{captureNotice}</p>}
+      </div>
+
       <Field label="가게명" required error={errors.storeName}>
         <input
           type="text"

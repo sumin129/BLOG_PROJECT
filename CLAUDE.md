@@ -11,7 +11,7 @@
 - **스타일**: Tailwind CSS
 - **키워드 경쟁도 분석**: 네이버 검색 API
 - **게시글 생성**: Google Gemini API (gemini-2.5-flash)
-- **썸네일 캡처**: html2canvas
+- **썸네일 캡처**: html2canvas-pro (Tailwind v4 oklch 색상 지원을 위해 html2canvas 대신 사용)
 
 ## 환경변수 (.env)
 
@@ -56,7 +56,8 @@ src/
 │   └── ThumbnailEditor.jsx   # 썸네일 편집 + 다운로드
 ├── services/
 │   ├── naverApi.js           # 네이버 검색 API 호출
-│   └── geminiApi.js          # Google Gemini API 호출
+│   ├── geminiApi.js          # Google Gemini API 호출
+│   └── postStyleGuide.js     # 게시글 작성 스타일 가이드 (말투/구조/SEO 규칙)
 ├── App.jsx                   # 탭 라우팅
 └── main.jsx
 ```
@@ -64,6 +65,7 @@ src/
 ## 화면 구성 (탭)
 
 ### 탭 1 — 맛집 정보 입력
+- 주소/영업시간 캡쳐 붙여넣기 (Gemini Vision으로 주소·영업시간 자동 추출)
 - 가게명 (필수)
 - 지역 / 주소 (필수)
 - 음식 종류 (필수)
@@ -82,7 +84,7 @@ src/
 ### 탭 3 — 게시글 미리보기
 - 생성된 제목 표시
 - 본문 전체 미리보기 (스크롤)
-- [제목 복사] [본문 복사] [전체 복사] 버튼
+- [제목 복사] [본문 복사] 버튼
 - [다시 생성] 버튼
 
 ### 탭 4 — 썸네일 생성
@@ -164,7 +166,11 @@ JSON 형식으로만 응답:
 
 ### 게시글 생성 프롬프트
 
+말투/구조/SEO 규칙은 `src/services/postStyleGuide.js`의 `POST_STYLE_GUIDE` 상수로 분리되어 있다. 가이드 내용을 수정할 때는 이 파일만 수정하면 된다 (CLAUDE.md에는 중복 보관하지 않음).
+
 ```js
+import { POST_STYLE_GUIDE } from './postStyleGuide';
+
 const postPrompt = `
 당신은 네이버 맛집 블로그 작성 전문가입니다.
 아래 정보와 스타일 가이드를 참고해서 블로그 게시글을 작성해주세요.
@@ -185,27 +191,7 @@ const postPrompt = `
 
 ## 작성 스타일 가이드 (필수 준수)
 
-### 말투
-- 친근한 구어체, ~요/~어요/~습니다 혼용
-- 흥분/감탄 표현 자주 사용: "미쳤어요", "개맛도리", "레전드", "왕왕"
-- 줄임말, 신조어 자연스럽게 섞기: "렛츠고", "챱챱", "맛도리"
-- 쉼표 여러개(,,), ㅋㅋ, ㅠㅠ 적절히 사용
-- 혼잣말 스타일의 감탄: "대창 사랑해...", "소주 야르~하다"
-- 가성비 포인트는 꼭 가격 직접 명시
-
-### 구조 (이 순서로 작성)
-1. 인사 + 방문 계기 (2~3줄, 짧게)
-2. 가게명 + 위치/영업시간 소제목 → 주소, 영업시간 기재
-3. 내부/분위기 소제목 → 분위기 묘사
-4. 기본찬/반찬 소제목 → 반찬 묘사
-5. 메인 메뉴 소제목 → 메뉴별 개인 코멘트, 취향 순위
-6. 마무리 총평 + 강력 추천 멘트
-7. 주소 한 번 더 기재
-
-### SEO 규칙
-- 소제목 형식: "[지역] [음식종류] 맛집 [가게명]" 패턴 사용
-- 본문 키워드를 자연스럽게 2~3회 반복 삽입
-- 게시글 끝에 주소 텍스트로 한 번 더 작성
+${POST_STYLE_GUIDE}
 
 제목과 본문을 아래 JSON 형식으로만 응답:
 {
@@ -215,10 +201,35 @@ const postPrompt = `
 `;
 ```
 
-## 썸네일 생성 (html2canvas)
+### 캡쳐 이미지에서 주소/영업시간 추출 (Gemini Vision)
+
+`callGemini`에 텍스트 프롬프트와 이미지 파트를 함께 배열로 전달하면 Vision 분석이 가능하다:
+
+```js
+const extractPrompt = `
+아래는 네이버플레이스 등에서 캡쳐한 가게 정보 이미지입니다.
+이미지에서 주소와 영업시간 정보를 추출해주세요.
+
+JSON 형식으로만 응답:
+{
+  "address": "추출된 주소",
+  "hours": "추출된 영업시간"
+}
+`;
+
+const data = await callGemini([
+  extractPrompt,
+  { inlineData: { data: base64Image, mimeType: 'image/png' } },
+]);
+```
+
+- `base64Image`는 `data:image/png;base64,` 접두사를 제외한 순수 base64 문자열
+- 클립보드에서 붙여넣은 이미지는 `FileReader.readAsDataURL` 후 `,` 기준으로 분리해서 추출
+
+## 썸네일 생성 (html2canvas-pro)
 
 ```jsx
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 
 const downloadThumbnail = async () => {
   const el = document.getElementById('thumbnail-preview');
@@ -230,7 +241,10 @@ const downloadThumbnail = async () => {
 };
 ```
 
-썸네일 미리보기 요소 권장 크기: `width: 800px, height: 533px` (3:2 비율, 네이버 블로그 대표이미지 권장)
+썸네일 미리보기 요소 권장 크기: `width: 600px, height: 600px` (1:1 비율, 크롭 비율도 1:1)
+- 사진이 캔버스 전체 배경을 채움 (object-cover)
+- 메인/서브 문구는 사진 위에 오버레이로 표시되며, 9방향(상/중/하 x 좌/중/우) 위치 선택 가능
+- 텍스트는 별도 배경색 없이 text-shadow로 가독성 확보
 
 ## 실행 권한
 
@@ -253,5 +267,6 @@ const downloadThumbnail = async () => {
 
 - Gemini API 키는 프론트에서 직접 호출 (VITE_ prefix 환경변수)
 - 네이버 API CORS 문제는 Vite proxy로 해결
-- html2canvas는 CORS 이미지 처리를 위해 `useCORS: true` 필수
+- html2canvas-pro는 CORS 이미지 처리를 위해 `useCORS: true` 필수
+- html2canvas(원본)는 Tailwind v4의 oklch 색상 함수를 파싱하지 못해 "Attempting to parse an unsupported color function oklch" 오류 발생 → html2canvas-pro 사용으로 해결
 - 업로드 이미지는 로컬 ObjectURL 사용 (서버 업로드 불필요)
