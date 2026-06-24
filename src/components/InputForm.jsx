@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { extractStoreInfoFromImage } from '../services/geminiApi'
+import { loadFromStorage, saveToStorage, saveDraft, loadDrafts, deleteDraft } from '../utils/storage'
 
 const initialFormData = {
   storeName: '',
@@ -44,11 +45,48 @@ function fileToBase64(file) {
 }
 
 function InputForm({ onAnalyze }) {
-  const [formData, setFormData] = useState(initialFormData)
+  const [formData, setFormData] = useState(() => loadFromStorage('formData', initialFormData))
   const [errors, setErrors] = useState({})
   const [isExtracting, setIsExtracting] = useState(false)
   const [captureError, setCaptureError] = useState('')
   const [captureNotice, setCaptureNotice] = useState('')
+  const [drafts, setDrafts] = useState(() => loadDrafts())
+  const [showDrafts, setShowDrafts] = useState(false)
+  const [saveNotice, setSaveNotice] = useState('')
+  const draftsRef = useRef(null)
+
+  useEffect(() => {
+    saveToStorage('formData', formData)
+  }, [formData])
+
+  useEffect(() => {
+    if (!showDrafts) return
+    const handleClickOutside = (e) => {
+      if (draftsRef.current && !draftsRef.current.contains(e.target)) {
+        setShowDrafts(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showDrafts])
+
+  const handleSaveDraft = () => {
+    const next = saveDraft(formData)
+    setDrafts(next)
+    setSaveNotice('임시저장되었습니다.')
+    setTimeout(() => setSaveNotice(''), 1500)
+  }
+
+  const handleLoadDraft = (draft) => {
+    setFormData(draft.formData)
+    setShowDrafts(false)
+  }
+
+  const handleDeleteDraft = (e, id) => {
+    e.stopPropagation()
+    const next = deleteDraft(id)
+    setDrafts(next)
+  }
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -234,13 +272,65 @@ function InputForm({ onAnalyze }) {
         <p className="mt-1 text-xs text-gray-400">쉼표(,)로 구분해 여러 개 입력할 수 있어요.</p>
       </Field>
 
-      <div className="pt-2">
+      <div className="flex flex-wrap items-center gap-2 pt-2">
         <button
           type="submit"
-          className="w-full rounded-md bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600 sm:w-auto"
+          className="rounded-md bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
         >
           분석 시작
         </button>
+        <button
+          type="button"
+          onClick={handleSaveDraft}
+          className="rounded-md border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        >
+          임시저장
+        </button>
+        <div className="relative" ref={draftsRef}>
+          <button
+            type="button"
+            onClick={() => { setDrafts(loadDrafts()); setShowDrafts((v) => !v) }}
+            className="rounded-md border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            불러오기
+          </button>
+          {showDrafts && (
+            <div className="absolute bottom-full left-0 z-10 mb-1 w-72 rounded-md border border-gray-200 bg-white shadow-lg">
+              {drafts.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-400">임시저장된 내역이 없습니다.</p>
+              ) : (
+                <ul>
+                  {drafts.map((draft) => (
+                    <li
+                      key={draft.id}
+                      onClick={() => handleLoadDraft(draft)}
+                      className="flex cursor-pointer items-center justify-between border-b border-gray-100 px-4 py-2.5 last:border-b-0 hover:bg-gray-50"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900">{draft.storeName}</p>
+                        <p className="text-xs text-gray-400">
+                          {new Date(draft.savedAt).toLocaleString('ko-KR', {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteDraft(e, draft.id)}
+                        className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        {saveNotice && <span className="text-sm text-green-600">{saveNotice}</span>}
       </div>
     </form>
   )

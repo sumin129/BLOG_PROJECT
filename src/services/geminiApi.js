@@ -9,11 +9,29 @@ const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
  * @param {string | Array<string | object>} contentParts
  * @returns {Promise<unknown>}
  */
-async function callGemini(contentParts) {
-  const result = await model.generateContent(contentParts)
-  const text = result.response.text()
-  const clean = text.replace(/```json|```/g, '').trim()
-  return JSON.parse(clean)
+async function callGemini(contentParts, retries = 5) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await model.generateContent(contentParts)
+      const text = result.response.text()
+      const clean = text.replace(/```json|```/g, '').trim()
+      return JSON.parse(clean)
+    } catch (err) {
+      const isRetryable =
+        err?.status === 503 ||
+        err?.status === 429 ||
+        err?.message?.includes('503') ||
+        err?.message?.includes('429') ||
+        err?.message?.includes('high demand') ||
+        err?.message?.includes('RESOURCE_EXHAUSTED')
+      if (isRetryable && attempt < retries) {
+        const delay = Math.min(2000 * 2 ** attempt, 30000)
+        await new Promise((r) => setTimeout(r, delay))
+        continue
+      }
+      throw err
+    }
+  }
 }
 
 /**

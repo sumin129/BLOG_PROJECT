@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchKeywordCompetition, getCompetitionLevel } from '../services/naverApi'
 import { selectKeywords } from '../services/geminiApi'
+import { loadFromStorage, saveToStorage } from '../utils/storage'
 
 const LEVEL_BADGE_CLASS = {
   low: 'bg-green-100 text-green-700',
@@ -16,11 +17,11 @@ function parseKeywords(keywordsText) {
 }
 
 function KeywordAnalysis({ restaurantInfo, onGeneratePost }) {
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState(() => loadFromStorage('keywordResults', []))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const [selection, setSelection] = useState(null)
+  const [selection, setSelection] = useState(() => loadFromStorage('keywordSelection', null))
   const [selectionLoading, setSelectionLoading] = useState(false)
   const [selectionError, setSelectionError] = useState('')
 
@@ -29,16 +30,25 @@ function KeywordAnalysis({ restaurantInfo, onGeneratePost }) {
   useEffect(() => {
     if (keywords.length === 0) return
 
+    const cached = loadFromStorage('keywordResults', [])
+    const cachedFor = loadFromStorage('keywordResultsFor', null)
+    if (cached.length > 0 && cachedFor === restaurantInfo?.keywords) return
+
     let isCancelled = false
 
     const loadCompetition = async () => {
       setLoading(true)
       setError('')
       setSelection(null)
+      saveToStorage('keywordSelection', null)
       setSelectionError('')
       try {
         const data = await fetchKeywordCompetition(keywords)
-        if (!isCancelled) setResults(data)
+        if (!isCancelled) {
+          setResults(data)
+          saveToStorage('keywordResults', data)
+          saveToStorage('keywordResultsFor', restaurantInfo?.keywords)
+        }
       } catch (err) {
         if (!isCancelled) setError(err.message || '키워드 분석 중 오류가 발생했습니다.')
       } finally {
@@ -57,6 +67,9 @@ function KeywordAnalysis({ restaurantInfo, onGeneratePost }) {
   useEffect(() => {
     if (results.length === 0) return
 
+    const cached = loadFromStorage('keywordSelection', null)
+    if (cached) return
+
     let isCancelled = false
 
     const loadSelection = async () => {
@@ -69,7 +82,10 @@ function KeywordAnalysis({ restaurantInfo, onGeneratePost }) {
           foodType: restaurantInfo.foodType,
           keywordResults: results,
         })
-        if (!isCancelled) setSelection(data)
+        if (!isCancelled) {
+          setSelection(data)
+          saveToStorage('keywordSelection', data)
+        }
       } catch (err) {
         if (!isCancelled) setSelectionError(err.message || '키워드 선정 중 오류가 발생했습니다.')
       } finally {

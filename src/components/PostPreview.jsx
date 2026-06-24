@@ -1,18 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
 import { generatePost } from '../services/geminiApi'
+import { loadFromStorage, saveToStorage } from '../utils/storage'
 
 function PostPreview({ restaurantInfo, selection }) {
-  const [post, setPost] = useState(null)
+  const [post, setPost] = useState(() => loadFromStorage('generatedPost', null))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [feedback, setFeedback] = useState('')
   const [activeFeedback, setActiveFeedback] = useState('')
-  const previousPostRef = useRef(null)
+  const previousPostRef = useRef(loadFromStorage('generatedPost', null))
+  const initialLoadRef = useRef(true)
 
   useEffect(() => {
     if (!restaurantInfo || !selection) return
+
+    if (initialLoadRef.current && post) {
+      initialLoadRef.current = false
+      return
+    }
+    initialLoadRef.current = false
 
     let isCancelled = false
 
@@ -36,6 +44,7 @@ function PostPreview({ restaurantInfo, selection }) {
         })
         if (!isCancelled) {
           setPost(data)
+          saveToStorage('generatedPost', data)
           previousPostRef.current = data
         }
       } catch (err) {
@@ -50,6 +59,7 @@ function PostPreview({ restaurantInfo, selection }) {
     return () => {
       isCancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurantInfo, selection, reloadKey, activeFeedback])
 
   const handleRegenerate = () => {

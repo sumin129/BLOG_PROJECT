@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import InputForm from './components/InputForm'
 import KeywordAnalysis from './components/KeywordAnalysis'
 import PostPreview from './components/PostPreview'
 import ThumbnailEditor from './components/ThumbnailEditor'
+import { loadFromStorage, saveToStorage } from './utils/storage'
 
 const TABS = [
   { id: 'input', label: '맛집 정보 입력' },
@@ -12,9 +13,13 @@ const TABS = [
 ]
 
 function App() {
-  const [activeTab, setActiveTab] = useState('input')
-  const [restaurantInfo, setRestaurantInfo] = useState(null)
-  const [selectedKeywords, setSelectedKeywords] = useState(null)
+  const [activeTab, setActiveTab] = useState(() => loadFromStorage('activeTab', 'input'))
+  const [restaurantInfo, setRestaurantInfo] = useState(() => loadFromStorage('restaurantInfo', null))
+  const [selectedKeywords, setSelectedKeywords] = useState(() => loadFromStorage('selectedKeywords', null))
+
+  useEffect(() => { saveToStorage('activeTab', activeTab) }, [activeTab])
+  useEffect(() => { saveToStorage('restaurantInfo', restaurantInfo) }, [restaurantInfo])
+  useEffect(() => { saveToStorage('selectedKeywords', selectedKeywords) }, [selectedKeywords])
 
   const handleAnalyze = (formData) => {
     setRestaurantInfo(formData)
